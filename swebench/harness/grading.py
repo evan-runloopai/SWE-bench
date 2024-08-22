@@ -21,12 +21,14 @@ from swebench.harness.log_parsers import MAP_REPO_TO_PARSER
 
 # MARK: Utility functions
 def test_passed(case: str, sm: dict[str, str]) -> bool:
+    print("CASE", case, "SM", sm)
     return case in sm and sm[case] == TestStatus.PASSED.value
 
 
 def test_failed(case: str, sm: dict[str, str]) -> bool:
     return case not in sm or any(
-        sm[case] == status for status in [TestStatus.FAILED.value, TestStatus.ERROR.value]
+        sm[case] == status
+        for status in [TestStatus.FAILED.value, TestStatus.ERROR.value]
     )
 
 
@@ -40,12 +42,14 @@ def get_logs_eval(log_fp: str) -> tuple[dict[str, str], bool]:
     Returns:
         bool: whether the patch applied successfully
         dict: status map
-    
+
     TODO(john-b-yang): Check this is working properly...
     """
     # Convert e.g. "logs/scikit-learn__scikit-learn-12421/test_output.txt" to "scikit-learn/scikit-learn"
     sample_id = str(Path(log_fp).parent.stem)  # e.g. scikit-learn__scikit-learn-12421
-    repo = "-".join(sample_id.replace("__", "/").split("-")[:-1])  # e.g. scikit-learn/scikit-learn
+    repo = "-".join(
+        sample_id.replace("__", "/").split("-")[:-1]
+    )  # e.g. scikit-learn/scikit-learn
     log_parser = MAP_REPO_TO_PARSER[repo]
 
     with open(log_fp) as f:
@@ -204,7 +208,7 @@ def get_resolution_status(report: dict[str, dict[str, Any]]) -> str:
         return ResolvedStatus.PARTIAL.value
     else:
         return ResolvedStatus.NO.value
-    
+
 
 def get_eval_report(
     test_spec: TestSpec,
@@ -243,7 +247,6 @@ def get_eval_report(
 
     # Get evaluation logs
     eval_sm, found = get_logs_eval(log_path)
-
     if not found:
         return report_map
     report_map[instance_id]["patch_successfully_applied"] = True
@@ -255,10 +258,11 @@ def get_eval_report(
     }
 
     report = get_eval_tests_report(eval_sm, eval_ref)
+    print("REPORT", report)
     if get_resolution_status(report) == ResolvedStatus.FULL.value:
         report_map[instance_id]["resolved"] = True
 
     if include_tests_status:
         report_map[instance_id]["tests_status"] = report  # type: ignore
-    
+
     return report_map

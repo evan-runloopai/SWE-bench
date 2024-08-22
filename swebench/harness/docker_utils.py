@@ -9,9 +9,108 @@ import time
 import traceback
 from pathlib import Path
 
-from docker.models.containers import Container
+from docker.models.containers import Container, ExecResult
+from runloop_api_client import Runloop
 
 HEREDOC_DELIMITER = "EOF_1399519320"  # different from dataset HEREDOC_DELIMITERs!
+
+
+def runloop_exec_run(
+    rl_client: Runloop, devbox_id: str, cmd: str, workdir: str, user: str | None = None
+):
+    composite_cmd = cmd
+    if user == "root":
+        composite_cmd = f"sudo {composite_cmd}"
+    if workdir:
+        composite_cmd = f"cd {workdir} && {composite_cmd}"
+    result = rl_client.devboxes.execute_sync(id=devbox_id, command=composite_cmd)
+    a = result.stdout
+    if a is None:
+        a = ""
+    b = result.stderr
+    if b is None:
+        b = ""
+    output = b + "\n" + a
+    return ExecResult(exit_code=result.exit_status, output=output.encode("utf-8"))
+
+
+def runloop_copy_to_container(rl_client: Runloop, devbox_id: str, src: Path, dst: Path):
+    """
+    Copy a file from local to a docker container
+
+    Args:
+        container (Container): Docker container to copy to
+        src (Path): Source file path
+        dst (Path): Destination file path in the container
+    """
+    # Check if destination path is valid
+    if os.path.dirname(dst) == "":
+        raise ValueError(
+            f"Destination path parent directory cannot be empty!, dst: {dst}"
+        )
+
+    # temporary tar file
+    # tar_path = src.with_suffix(".tar")
+    # with tarfile.open(tar_path, "w") as tar:
+    #     tar.add(src, arcname=src.name)
+
+    # # get bytes for put_archive cmd
+    # with open(tar_path, "rb") as tar_file:
+    #     data = tar_file.read()
+
+    # Make directory if necessary
+    # container.exec_run(f"mkdir -p {dst.parent}")
+    rl_client.devboxes.execute_sync(id=devbox_id, command=f"sudo mkdir -p {dst.parent}")
+
+    # Read src and upload
+    temp_path = "/home/user/tmp"
+    with open(src, "rb") as f:
+        data = f.read()
+        rl_client.devboxes.upload_file(id=devbox_id, file=data, path=temp_path)
+        # Now with sudo move the file to the destination
+        rl_client.devboxes.execute_sync(
+            id=devbox_id, command=f"sudo mv {temp_path} {dst}"
+        )
+
+    # Send tar file to container and extract
+    # container.put_archive(os.path.dirname(dst), data)
+    # rl_client.devboxes.upload_file(id=devbox_id, file=tar_path, path=dst)
+
+    # container.exec_run(f"tar -xf {dst}.tar -C {dst.parent}")
+    # rl_client.devboxes.execute_sync(id=devbox_id, command=f"tar -xf {dst}.tar -C {dst.parent}")
+
+    # # clean up in locally and in container
+    # tar_path.unlink()
+    # # container.exec_run(f"rm {dst}.tar")
+    # rl_client.devboxes.execute_sync(id=devbox_id, command=f"rm {dst}.tar")
+
+
+def runloop_exec_run_with_timeout(
+    rl_client: Runloop, devbox_id: str, cmd, timeout: int | None = 60
+):
+    pass
+    start_time = time.time()
+    output = ""
+    timed_out = False
+    try:
+        result = rl_client.devboxes.execute_sync(
+            id=devbox_id, command=cmd, timeout=timeout
+        )
+        a = result.stdout
+        if a is None:
+            a = ""
+        b = result.stderr
+        if b is None:
+            b = ""
+        output = b + "\n" + a
+    except Exception as e:
+        output = ""
+        # We should actually check if this is just an error or a timeout but for now just assume it's a timeout
+        timed_out = True
+
+    end_time = time.time()
+    assert output is not None
+    return output, timed_out, end_time - start_time
 
 
 def copy_to_container(container: Container, src: Path, dst: Path):
@@ -173,7 +272,7 @@ def cleanup_container(client, container, logger):
         )
 
 
-def exec_run_with_timeout(container, cmd, timeout: int|None=60):
+def exec_run_with_timeout(container, cmd, timeout: int | None = 60):
     """
     Run a command in a container with a timeout.
 
@@ -183,7 +282,7 @@ def exec_run_with_timeout(container, cmd, timeout: int|None=60):
         timeout (int): Timeout in seconds.
     """
     # Local variables to store the result of executing the command
-    exec_result = ''
+    exec_result = ""
     exec_id = None
     exception = None
     timed_out = False
@@ -247,7 +346,7 @@ def find_dependent_images(client: docker.DockerClient, image_name: str):
         # Check if the base image is in this image's history
         history = image.history()
         for layer in history:
-            if layer['Id'] == base_image_id:
+            if layer["Id"] == base_image_id:
                 # If found, add this image to the dependent images list
                 tags = image.tags
                 dependent_images.append(tags[0] if tags else image.id)
@@ -265,11 +364,8 @@ def list_images(client: docker.DockerClient):
 
 
 def clean_images(
-        client: docker.DockerClient,
-        prior_images: set,
-        cache_level: str,
-        clean: bool
-    ):
+    client: docker.DockerClient, prior_images: set, cache_level: str, clean: bool
+):
     """
     Clean Docker images based on cache level and clean flag.
 
@@ -296,12 +392,7 @@ def clean_images(
     print(f"Removed {removed} images.")
 
 
-def should_remove(
-        image_name: str,
-        cache_level: str,
-        clean: bool,
-        prior_images: set
-    ):
+def should_remove(image_name: str, cache_level: str, clean: bool, prior_images: set):
     """
     Determine if an image should be removed based on cache level and clean flag.
     """
